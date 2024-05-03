@@ -1,0 +1,106 @@
+Databricks - Master Azure Databricks for Data Engineers
+------------------------------------------------------
+1.Unity catalog -- 
+	-storage credentials
+	-ext location
+2.Mount s3 bucket in databricks
+3.delta live table
+4.pipeline
+5.Databricks workflow
+6.Auto loader function of Databricks
+7.Delta table
+8.Revise decorator function of python
+
+*Procedural ETL vs Declarative ETL
+
+Auto loader:-
+--------------
+-incremental data load is a common data loading pattern in ETL pipeline
+-Incremental data load refers to process of adding new or modified data to existing dataset without 
+reloading existing dataset.
+-Is complex and challenging to handle incremental load.
+-Features of incremental load
+	1.Only process new data files
+	2.process new data load asap new file is detected
+	3.Dont miss any new file
+	4.repeatable pattern
+-Solution to incremental load 
+	1.watermark pattern
+	2.check pointing
+	3.Autoloader:- 
+	feature provided by databricks to continuously, efficiently, automatically process incremental load
+	currently support only cloud storage system- s3, ADLS gen2, DBFS, GCS etc..
+	File format support- json, parquet, avro, csv, orc, text, binaryfile format.
+--Components of Autoloader:
+storing the metadata of processed files through internal database (rockDB)
+Processing new files immediately using spark structure streaming
+using advance cloud-native component to identify new files as soon as they arrived
+
+Autoloader Mode:
+Directory listing mode(default) - Batch data
+File notification Mode -Streaming data 
+	event grid
+	azure queue
+
+basic configuration:
+df=(spark.readStream\
+			.format('cloudFiles')\
+			.option('cloudFiles.format','json/csv/parquet/')
+			.load(location)
+Schema option:
+df=(spark.readStream\
+			.format('cloudFiles')\
+			.option('cloudFiles.format','json/csv/parquet/')\
+			.schema(user_schema)\
+			.load(location)
+#usually infer schema is expensive option and not recommended but not with Auto loader.
+Auto loader effeciently sample the data to infer the schema and stored it under cloudFiles.schmeaLocation
+#Another option cloudFiles.inferColumnTypes determines proper data types from our data 
+#SchemaHint option enforce the part of our schema 
+df=(spark.readStream\
+			.format('cloudFiles')\
+			.option('cloudFiles.format','json/csv/parquet/')
+			.option('cloudFiles.schemaLocation','/mnt/data/inferred_schema')
+			.option('cloudFiles.inferCloumtypes','True')
+			.option('cloudFiles.schemaHints','emp_Id bigint')
+			.load(location)
+
+
+	
+Delta Lake Feature:-
+-Delta lake is open source file format on the top of data lake storage -- adls, blob storage, s3 etc
+-Delta lake gaves us CRUD operation and ACID transactions-- 
+-Delta table gaves us SQL like tables called delta table
+-On delta table we can do all types of operations of RDBMS like merge and update, delete, insert etc
+-Delta table has transaction log feature which makes us do time travel and versioning
+-We have schema evolution and schema enforcement
+
+Delta Live Table:-
+=================
+-DLT are build to get rid of complexity of ETL pipeline by enabling automatic build, maintain 
+and monitoring end to end ETL pipeline and custom framework.
+-DLT is available on databricks
+-Delta live table are not supported by single node cluster whereas delta lake table can build 
+on single node cluster
+Adv:
+	1.Automatic checkpoint and restart
+	2.file drop and pipeline trigger
+	3.apply/enforce validation rules --perform the quality check by using rules
+	4.monitor pipeline and handle failures
+	5.Data lineage tracking
+	6.support schema evolution via delta(update on schema change)
+	
+
+Unity Catalog:-
+=============
+-Unity catalog is a unified data governance solution for data and AI assets on lakehouse.
+-objects in unity catalog
+	metastore- top level container of object it stores the metadata of the objects
+	catalog- 
+	table
+
+
+
+
+
+	
