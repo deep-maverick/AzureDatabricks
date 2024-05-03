@@ -1,0 +1,152 @@
+# Databricks notebook source
+# MAGIC %md
+# MAGIC # Data Ingestion from Amazon S3 to Databricks
+# MAGIC
+# MAGIC ## Introduction
+# MAGIC
+# MAGIC This notebook demonstrates the process of loading data from Amazon S3 bucket into the Bronze Layer using Databricks Auto Loader.
+# MAGIC ## Features
+# MAGIC #### Auto Loader
+# MAGIC Databricks Auto Loader is a reliable and scalable data ingestion service designed to handle data streaming from cloud storage systems like Amazon S3. It automates the process of ingesting data from multiple sources into Delta Lake tables, making real-time data ingestion seamless and efficient.
+# MAGIC
+# MAGIC #### Unity Catalog
+# MAGIC The Unity Catalog in Databricks is a powerful and unified metadata service that simplifies data management and discovery across multiple data sources. It provides a centralized view of various data assets, such as tables, views, and databases, making it easier to explore and access data within Databricks workspaces. With Unity Catalog, users can efficiently organize, search, and collaborate on data, promoting data governance and data-driven decision-making.
+# MAGIC
+# MAGIC #### Delta Live Tables
+# MAGIC Delta Live Tables is a real-time data processing feature that combines structured streaming with Delta Lake to build end-to-end data pipelines for real-time analytics. It enables users to perform continuous data processing, incremental data updates, and low-latency analytics, empowering data engineers and analysts with real-time insights.
+# MAGIC
+# MAGIC ## Data Sources
+# MAGIC - UCS: Contains data from Source UCS and Folder CID94D.
+# MAGIC
+# MAGIC ## Data Ingestion Flow
+# MAGIC
+# MAGIC 1. **Ingest Data from S3 Buckets:** Data from UCS is staged as Parquet files in respective Amazon S3 buckets, from which data is fetched in its raw form, ready for further processing. Parquet format ensures data efficiency and columnar storage. Parquet files are loaded into source_<name> schema which can queried for analysis.
+# MAGIC 2. **Create Separate Tables in Bronze Layer:** File Arrival trigger based ingestion happens in to the Databricks Bronze(Raw) layer through Auto Loader. Separate schema's 'source_<name>' are created in the Bronze Layer to store data from each source and table. This organization allows efficient management and querying of data from different sources.
+# MAGIC 3. **Infer Schema from Each Table:** The schema of each table is automatically inferred based on the data, simplifying the data preparation process and ensuring data consistency.
+# MAGIC 4. **Calculate Current Timestamp:** Using Databricks functions, the current timestamp is calculated and stored as the 'created_on' column in each table. This column indicates when the data was ingested through the Auto Loader, providing valuable metadata for analysis.
+# MAGIC 5. **Cleaned Tables:** Create live tables by cleaning some data like handling null values. Only pick latest record using rank function and partition by primary key columns.
+# MAGIC
+# MAGIC By following this data ingestion flow, we ensure that data from various sources is efficiently processed, organized, and enriched with essential metadata for downstream analysis and reporting.
+# MAGIC
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ##Note:
+# MAGIC This Notebook contains only transactional data used for Near Real-Time ingestion for Trade & Promotion (T&P) Application
+
+# COMMAND ----------
+
+from pyspark.sql.functions import current_timestamp
+import dlt
+
+# COMMAND ----------
+
+
+## Note: Uncomment if the table is available and has data in S3
+## Initial load S3 -> s3://unfi-data-landing-dev-s3/dev/hvr/ucs/cid94d/
+## Incremental load S3 -> s3://unfi-data-landing-dev-s3/dev/hvr/ucs/cid94d_tp/
+bucket_prefix = "s3://unfi-data-landing-dev-s3/dev/hvr/ucs/cid94d/"
+table_to_bucket = {
+    "banner_cluster": "banner_cluster/",
+    "banner": "banner/",
+    "category_manager":"category_manager/",
+    "cls_bnr_dist_shr":"cls_bnr_dist_shr/",
+    "cls_dc_dist_shr":"cls_dc_dist_shr/",
+    "corp_prom_banner":"corp_prom_banner/",
+    "corp_prom_clm":"corp_prom_clm/",
+    "corp_prom_eig":"corp_prom_eig/",
+    "corp_prom_itm_grps":"corp_prom_itm_grps/",
+    "corp_prom_itm":"corp_prom_itm/",
+    "corp_prom_msigs":"corp_prom_msigs/",
+    "corp_prom_spr_bnnr":"corp_prom_spr_bnnr/",
+    "corp_prom":"corp_prom/",
+    "cpri_egi_rel":"cpri_egi_rel/",
+    "ctgry_mgr_subclass":"ctgry_mgr_subclass/",
+    "deal_banner_mig":"deal_banner_mig/",
+    "deal_clm":"deal_clm/",
+    "deal_coupon":"deal_coupon/",
+    "deal_upld_prfl":"deal_upld_prfl/",
+    "event_itm_grp":"event_itm_grp/",
+    "event_grp_itm":"event_grp_itm/",
+    "fund_control":"fund_control/",
+    "fund_trans_cd":"fund_trans_cd/",
+    "fund":"fund/",
+    "group_promotion":"group_promotion/",
+    "master_itm_grp":"master_itm_grp/",
+    "master_itm_grp_itm" : "master_itm_grp_itm/",
+    "media_type_itm_grp":"media_type_itm_grp/",
+    "merch_event":"merch_event/",
+    "profit_ctr_perf":"profit_ctr_perf/",
+    "profile_exceptions":"profile_exceptions/",
+    "prom_mndct_xfer":"prom_mndct_xfer/",
+    "prom_bnr_ls":"prom_bnr_ls/",
+    "prom_itm_bnr_ls":"prom_itm_bnr_ls/",
+    "prom_itm_invc":"prom_itm_invc/",
+    "prom_itm_rcpts":"prom_itm_rcpts/",
+    "prom_media_itm_grp":"prom_media_itm_grp/",
+    "prom_min_deduct":"prom_min_deduct/",
+    "prom_ord_grp":"prom_ord_grp/",
+    "promotion_item":"promotion_item/",
+    "promotion":"promotion/",
+    "region_banner":"region_banner/",
+    "rgn_spr_bnnr_prfl":"rgn_spr_bnnr_prfl/",
+    "rgn_vnd_prfl":"rgn_vnd_prfl/",
+    "scan_data_dtl":"scan_data_dtl/", 
+    "scan_data_hdr":"scan_data_hdr/", 
+    "spr_bnnr_rgn_bnnr":"spr_bnnr_rgn_bnnr/",
+    "store_item":"store_item/",
+    "store_item_ls":"store_item_ls/",
+    "store_item_perf":"store_item_perf/",
+    "store_itm_grp_hist":"store_itm_grp_hist/",
+    "store_ls_distshr":"store_ls_distshr/",
+    "store_prom_perf":"store_prom_perf/",
+    "store_scan_dtl":"store_scan_dtl/",
+    "store_scan_hdr":"store_scan_hdr/",
+    "sub_fund_trans":"sub_fund_trans/",
+    "sub_fund":"sub_fund/",
+    "super_banner":"super_banner/",
+    "super_event":"super_event/",
+    "super_merch_event":"super_merch_event/",
+    "web_asset_xref":"web_asset_xref/",
+    "web_user":"web_user/"
+    
+}
+
+# table_to_bucket = {"trade_item_attrib":"trade_item_attrib/"}
+
+for table_name, suffix in table_to_bucket.items():
+
+    bucket_path = bucket_prefix + suffix
+
+    listfileInfo = dbutils.fs.ls(bucket_prefix)
+    file_in_s3 = [file.name.lower() for file in listfileInfo]
+
+
+    if suffix.lower() in file_in_s3:
+        @dlt.table(name=table_name,
+                    comment=f"{table_name} data",
+                    table_properties={
+                        "quality": "bronze"
+                    })
+        
+        def date_python_table(bucket_path=bucket_path):
+            return (
+                spark.readStream.format("cloudFiles") \
+                    .option("cloudFiles.format", "parquet") \
+                    .option("cloudFiles.inferColumnTypes", "true") \
+                    .option("cloudFiles.backfillInterval","02 day") \
+                    .load(bucket_path) \
+                    .withColumn('created_on', current_timestamp()) \
+                    .selectExpr("*", "_metadata as source_metadata")
+            )
+
+# COMMAND ----------
+
+listfileInfo = dbutils.fs.ls(bucket_prefix)
+file_in_s3 = [file.name for file in listfileInfo]
+dir_list=list(table_to_bucket.values())
+
+missing_dir = [i for i in dir_list if i not in file_in_s3]
+
+# display(dbutils.fs.ls(bucket_prefix+'prom_itm_invc'))
